@@ -18,9 +18,42 @@ def load_data():
 df = load_data()
 
 # ======================
-# SIDEBAR MENU
+# SIDEBAR - GLOBAL FILTER (INTERACTIVE FEATURE)
 # ======================
 st.sidebar.title("📊 E-Commerce Dashboard")
+
+st.sidebar.markdown("## 🔎 Filter Data")
+
+min_date = df["order_purchase_timestamp"].min()
+max_date = df["order_purchase_timestamp"].max()
+
+start_date, end_date = st.sidebar.date_input(
+    "Select Date Range",
+    [min_date, max_date],
+    min_value=min_date,
+    max_value=max_date
+)
+
+# Apply date filter
+df = df[
+    (df["order_purchase_timestamp"] >= pd.to_datetime(start_date)) &
+    (df["order_purchase_timestamp"] <= pd.to_datetime(end_date))
+]
+
+# Optional category filter
+if "product_category_name_english" in df.columns:
+    category_list = df["product_category_name_english"].dropna().unique()
+    selected_category = st.sidebar.selectbox(
+        "Filter by Product Category (Optional)",
+        ["All"] + sorted(category_list.tolist())
+    )
+
+    if selected_category != "All":
+        df = df[df["product_category_name_english"] == selected_category]
+
+# ======================
+# NAVIGATION
+# ======================
 menu = st.sidebar.radio(
     "Navigation",
     ["Overview",
@@ -41,7 +74,7 @@ if menu == "Overview":
     total_revenue = df["payment_value"].sum()
     total_orders = df["order_id"].nunique()
     total_customers = df["customer_unique_id"].nunique()
-    avg_order_value = total_revenue / total_orders
+    avg_order_value = total_revenue / total_orders if total_orders > 0 else 0
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total Revenue", f"${total_revenue:,.0f}")
@@ -56,8 +89,14 @@ if menu == "Overview":
         orders=("order_id", "nunique")
     ).reset_index()
 
-    fig = px.line(monthly, x="month", y="revenue",
-                  title="Monthly Revenue Trend")
+    fig = px.line(
+        monthly,
+        x="month",
+        y=["revenue", "orders"],
+        markers=True,
+        title="Monthly Performance Trend"
+    )
+
     st.plotly_chart(fig, use_container_width=True)
 
 # ======================
@@ -67,15 +106,12 @@ elif menu == "Product Analysis":
     st.title("🛍 Product Performance")
 
     category_sales = (
-        df.groupby("product_category_name_english")["product_id"]
+        df.groupby("product_category_name_english")["order_item_id"]
         .count()
         .reset_index(name="total_sold")
         .sort_values("total_sold", ascending=False)
         .head(10)
     )
-
-    # Balik urutan supaya terbesar ada di atas (untuk bar horizontal)
-    category_sales = category_sales.sort_values("total_sold", ascending=True)
 
     fig = px.bar(
         category_sales,
@@ -84,6 +120,8 @@ elif menu == "Product Analysis":
         orientation="h",
         title="Top 10 Product Categories"
     )
+
+    fig.update_layout(yaxis_title="", xaxis_title="Total Items Sold")
 
     st.plotly_chart(fig, use_container_width=True)
 
@@ -96,18 +134,19 @@ elif menu == "Payment Analysis":
     payment_usage = (
         df.groupby("payment_type")["order_id"]
         .nunique()
-        .reset_index()
+        .reset_index(name="total_transactions")
     )
 
     payment_usage["percentage"] = (
-        payment_usage["order_id"] /
-        payment_usage["order_id"].sum()
+        payment_usage["total_transactions"] /
+        payment_usage["total_transactions"].sum()
     ) * 100
 
     fig = px.pie(
         payment_usage,
         names="payment_type",
         values="percentage",
+        hole=0.4,
         title="Payment Method Distribution (%)"
     )
 
@@ -119,27 +158,23 @@ elif menu == "Payment Analysis":
 elif menu == "Customer Analysis":
     st.title("👥 Customer Insights")
 
-    city_transactions = (
-        df.groupby("customer_city")["order_id"]
+    city_customers = (
+        df.groupby("customer_city")["customer_unique_id"]
         .nunique()
-        .reset_index(name="total_transactions")
-        .sort_values("total_transactions", ascending=False)
+        .reset_index(name="total_customers")
+        .sort_values("total_customers", ascending=False)
         .head(10)
     )
 
-    # Balik supaya terbesar ada di atas
-    city_transactions = city_transactions.sort_values("total_transactions", ascending=True)
-
     fig = px.bar(
-        city_transactions,
-        x="total_transactions",
+        city_customers,
+        x="total_customers",
         y="customer_city",
         orientation="h",
-        title="Top 10 Cities by Transactions"
+        title="Top 10 Cities by Unique Customers"
     )
 
-    fig.update_traces(texttemplate='%{x}', textposition='outside')
-    fig.update_layout(yaxis_title="", xaxis_title="Total Transactions")
+    fig.update_layout(yaxis_title="", xaxis_title="Total Customers")
 
     st.plotly_chart(fig, use_container_width=True)
 
@@ -159,17 +194,18 @@ elif menu == "RFM Analysis":
 
     rfm.columns = ["customer_id", "Recency", "Frequency", "Monetary"]
 
-    rfm["R_score"] = pd.qcut(rfm["Recency"], 5, labels=[5,4,3,2,1])
-    rfm["F_score"] = pd.qcut(rfm["Frequency"].rank(method="first"), 5, labels=[1,2,3,4,5])
-    rfm["M_score"] = pd.qcut(rfm["Monetary"], 5, labels=[1,2,3,4,5])
-
     col1, col2, col3 = st.columns(3)
-    col1.metric("Avg Recency", int(rfm["Recency"].mean()))
-    col2.metric("Avg Frequency", round(rfm["Frequency"].mean(),2))
+    col1.metric("Avg Recency (Days)", int(rfm["Recency"].mean()))
+    col2.metric("Avg Frequency", round(rfm["Frequency"].mean(), 2))
     col3.metric("Avg Monetary", f"${rfm['Monetary'].mean():,.0f}")
 
-    fig = px.histogram(rfm, x="Recency", nbins=50,
-                       title="Distribution of Recency")
+    fig = px.histogram(
+        rfm,
+        x="Recency",
+        nbins=50,
+        title="Distribution of Recency"
+    )
+
     st.plotly_chart(fig, use_container_width=True)
 
 # ======================
@@ -211,10 +247,13 @@ elif menu == "Customer Clustering":
     segment_counts = rfm["Segment"].value_counts().reset_index()
     segment_counts.columns = ["Segment", "Count"]
 
-    fig = px.pie(segment_counts,
-                 names="Segment",
-                 values="Count",
-                 title="Customer Segmentation Distribution")
+    fig = px.pie(
+        segment_counts,
+        names="Segment",
+        values="Count",
+        hole=0.4,
+        title="Customer Segmentation Distribution"
+    )
 
     st.plotly_chart(fig, use_container_width=True)
     st.dataframe(segment_counts)
@@ -226,7 +265,7 @@ elif menu == "Geolocation":
     st.title("🌍 Customer Geolocation Map")
 
     if "geolocation_lat" in df.columns:
-        sample = df.sample(2000)
+        sample = df.sample(min(2000, len(df)))
 
         fig = px.scatter_mapbox(
             sample,
